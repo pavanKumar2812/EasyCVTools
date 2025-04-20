@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>EasyCVCraft - ROI Extractor</title>
+  <!-- <script src="https://cdn.tailwindcss.com"></script> -->
+   <script src="../static/cdn_tailwindcss_3_4.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+  <nav class="bg-white shadow-md p-4">
+    <div class="container mx-auto flex justify-between items-center">
+      <h1 class="text-2xl font-bold text-blue-600">EasyCVCraft</h1>
+    </div>
+  </nav>
+
+  <main class="container mx-auto mt-10 p-6 bg-white rounded-xl shadow-lg">
+    <h2 class="text-xl font-semibold mb-4">Upload an image to extract ROI</h2>
+    
+    <form id="uploadForm" enctype="multipart/form-data" method="post">
+      <input name="file" type="file" id="imageInput" accept="image/*" class="mb-4 w-full border p-2 rounded" required>
+      <button type="submit" class="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700">Upload</button>
+    </form>
+
+    <div id="previewContainer" class="mt-6 hidden">
+      <p class="font-medium">Click on 4 ROI corners (Left Top → Right Top → Right Bottom → Left Bottom)</p>
+      <div id="canvasWrapper" class="mt-4 border-2 border-dashed w-full max-w-lg relative">
+        <canvas id="imageCanvas"></canvas>
+      </div>      
+      <div id="coords" class="mt-2 text-sm text-gray-600"></div>
+      <button id="generateBtn" class="mt-4 px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700">Generate ROI</button>
+    </div>
+  </main>
+
+  <footer class="mt-10 p-4 text-center text-gray-500">
+    © 2025 EasyCVCraft. Built with ❤️ using FastAPI and OpenCV.
+  </footer>
+
+  <style>
+    .draggable-point {
+      width: 14px;
+      height: 14px;
+      background-color: red;
+      border-radius: 50%;
+      position: absolute;
+      cursor: grab;
+      user-select: none;
+      z-index: 10;
+    }
+    #canvasWrapper {
+      position: relative;
+      display: inline-block;
+    }
+  </style>
+  
+  <script>
+    const imageInput = document.getElementById("imageInput");
+    const canvas = document.getElementById("imageCanvas");
+    const ctx = canvas.getContext("2d");
+    const coordsDiv = document.getElementById("coords");
+    const previewContainer = document.getElementById("previewContainer");
+    const generateBtn = document.getElementById("generateBtn");
+  
+    let image = new Image();
+    let draggablePoints = [];
+    let originalPositions = [];
+  
+    imageInput.addEventListener("change", function () {
+      const file = this.files[0];
+      if (file) {
+        const reader = new FileReader();
+        reader.onload = function (e) {
+          image.onload = function () {
+            canvas.width = image.width;
+            canvas.height = image.height;
+            ctx.drawImage(image, 0, 0);
+            previewContainer.classList.remove("hidden");
+            createDraggablePoints(image.width, image.height);
+          };
+          image.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+    });
+  
+    function createDraggablePoints(width, height) {
+      draggablePoints.forEach(p => p.remove());
+      draggablePoints = [];
+  
+      const wrapper = canvas.parentElement;
+      const corners = [
+        [0, 0],
+        [width - 14, 0],
+        [width - 14, height - 14],
+        [0, height - 14]
+      ];
+      originalPositions = [...corners];
+  
+      corners.forEach(([x, y], i) => {
+        const point = document.createElement("div");
+        point.classList.add("draggable-point");
+        point.style.left = `${x}px`;
+        point.style.top = `${y}px`;
+        point.dataset.index = i;
+        makeDraggable(point, wrapper);
+        wrapper.appendChild(point);
+        draggablePoints.push(point);
+      });
+    }
+  
+    function makeDraggable(point, wrapper) {
+      let offsetX, offsetY;
+      let isDragging = false;
+  
+      point.addEventListener("mousedown", (e) => {
+        isDragging = true;
+        offsetX = e.clientX - point.getBoundingClientRect().left;
+        offsetY = e.clientY - point.getBoundingClientRect().top;
+        point.style.cursor = "grabbing";
+      });
+  
+      document.addEventListener("mousemove", (e) => {
+        if (isDragging) {
+          const wrapperRect = wrapper.getBoundingClientRect();
+  
+          let x = e.clientX - wrapperRect.left - offsetX;
+          let y = e.clientY - wrapperRect.top - offsetY;
+  
+          x = Math.max(0, Math.min(x, canvas.width - 14));
+          y = Math.max(0, Math.min(y, canvas.height - 14));
+  
+          point.style.left = `${x}px`;
+          point.style.top = `${y}px`;
+  
+          updateCoordsDisplay();
+        }
+      });
+  
+      document.addEventListener("mouseup", () => {
+        isDragging = false;
+        point.style.cursor = "grab";
+      });
+    }
+  
+    function updateCoordsDisplay() {
+      const coords = draggablePoints.map(p => [
+        parseInt(p.style.left),
+        parseInt(p.style.top)
+      ]);
+      coordsDiv.innerText = `Points: ${JSON.stringify(coords)}`;
+    }
+  
+    generateBtn.addEventListener("click", async function () {
+      if (draggablePoints.length !== 4) {
+        alert("Please wait until the image and all points are loaded.");
+        return;
+      }
+  
+      const points = draggablePoints.map(p => [
+        parseInt(p.style.left),
+        parseInt(p.style.top)
+      ]);
+  
+      const formData = new FormData(document.getElementById("uploadForm"));
+      formData.append("points", JSON.stringify(points));
+  
+      const response = await fetch("/generate_roi/", {
+        method: "POST",
+        body: formData
+      });
+  
+      const blob = await response.blob();
+      const downloadLink = document.createElement("a");
+      downloadLink.href = URL.createObjectURL(blob);
+      downloadLink.download = "roi_output.jpg";
+      downloadLink.click();
+    });
+  
+    // ✅ Reset Button
+    const resetBtn = document.createElement("button");
+    resetBtn.innerText = "Reset ROI";
+    resetBtn.className = "mt-4 ml-4 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700";
+    previewContainer.appendChild(resetBtn);
+  
+    resetBtn.addEventListener("click", () => {
+      draggablePoints.forEach((p, i) => {
+        p.style.left = `${originalPositions[i][0]}px`;
+        p.style.top = `${originalPositions[i][1]}px`;
+      });
+      updateCoordsDisplay();
+    });
+  </script>
+  
+  
+  
+</body>
+</html>
